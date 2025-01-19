@@ -1,6 +1,6 @@
 module github.com/dharmab/skyeye
 
-go 1.23.3
+go 1.24.0
 
 require (
 	github.com/DCS-gRPC/go-bindings v0.7.1
@@ -231,4 +231,10 @@ require (
 	honnef.co/go/tools v0.5.1 // indirect
 	mvdan.cc/gofumpt v0.7.0 // indirect
 	mvdan.cc/unparam v0.0.0-20240528143540-8a5130ca722f // indirect
+)
+
+tool (
+	github.com/golangci/golangci-lint/cmd/golangci-lint
+	golang.org/x/lint/golint
+	gotest.tools/gotestsum
 )
