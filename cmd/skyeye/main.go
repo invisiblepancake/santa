@@ -18,6 +18,7 @@ import (
 
 	"golang.org/x/sys/cpu"
 
+	"github.com/gofrs/flock"
 	"github.com/martinlindhe/unit"
 	"github.com/rs/zerolog/log"
 	"github.com/spf13/cobra"
@@ -55,11 +56,13 @@ var (
 	telemetryUpdateInterval      time.Duration
 	recognizerName               string
 	whisperModelPath             string
+	recognizerLockPath           string
 	openAIAPIKey                 string
 	voiceName                    string
 	mute                         bool
 	voiceSpeed                   float64
 	voicePauseLength             time.Duration
+	voiceLockPath                string
 	enableAutomaticPicture       bool
 	automaticPictureInterval     time.Duration
 	enableThreatMonitoring       bool
@@ -114,6 +117,7 @@ func init() {
 	skyeye.Flags().StringVar(&whisperModelPath, "whisper-model", "", "Path to whisper.cpp model")
 	skyeye.Flags().StringVar(&openAIAPIKey, "openai-api-key", "", "API key for OpenAPI AI")
 	skyeye.MarkFlagsOneRequired("whisper-model", "openai-api-key")
+	skyeye.Flags().StringVar(&recognizerLockPath, "recognizer-lock-path", "", "Path to lock file for concurrent speech-to-text when using multiple instances")
 
 	// Text-to-speech
 	voiceFlag := cli.NewEnum(&voiceName, "Voice", "", "feminine", "masculine")
@@ -121,6 +125,7 @@ func init() {
 	skyeye.Flags().Float64Var(&voiceSpeed, "voice-playback-speed", 1.0, "How quickly the GCI speaks (values below 1.0 are faster and above are slower)")
 	skyeye.Flags().DurationVar(&voicePauseLength, "voice-playback-pause", 200*time.Millisecond, "How long the GCI pauses between sentences")
 	skyeye.Flags().BoolVar(&mute, "mute", false, "Mute all SRS transmissions. Useful for testing without disrupting play")
+	skyeye.Flags().StringVar(&voiceLockPath, "voice-lock-path", "", "Path to lock file for concurrent text-to-speech when using multiple instances")
 
 	// Controller behavior
 	skyeye.Flags().BoolVar(&enableAutomaticPicture, "auto-picture", true, "Enable automatic PICTURE broadcasts")
@@ -131,7 +136,12 @@ func init() {
 	skyeye.Flags().BoolVar(&threatMonitoringRequiresSRS, "threat-monitoring-requires-srs", true, "Require aircraft to be on SRS to receive THREAT calls. Only useful to disable when debugging")
 
 	// Tracing
+	skyeye.Flags().BoolVar(&enableTracing, "enable-tracing", false, "Enable tracing")
 	skyeye.Flags().BoolVar(&enableTracing, "tracing", false, "Enable tracing")
+	if err := skyeye.Flags().MarkDeprecated("tracing", "use --enable-tracing instead"); err != nil {
+		log.Fatal().Err(err).Msg("failed to mark flag as deprecated")
+	}
+	skyeye.MarkFlagsMutuallyExclusive("tracing", "enable-tracing")
 	skyeye.Flags().StringVar(&discordWebhookID, "discord-webhook-id", "", "Discord webhook ID for tracing")
 	skyeye.Flags().StringVar(&discordWebhookToken, "discord-webhook-token", "", "Discord webhook token for tracing")
 	skyeye.MarkFlagsRequiredTogether("discord-webhook-id", "discord-webhook-token")
@@ -288,6 +298,14 @@ func loadCallsign(rando *rand.Rand) (callsign string) {
 	return
 }
 
+func loadLock(path string) *flock.Flock {
+	if path == "" {
+		return nil
+	}
+	log.Info().Str("path", path).Msg("using lock file")
+	return flock.New(path)
+}
+
 func preRun(cmd *cobra.Command, _ []string) error {
 	if err := initializeConfig(cmd); err != nil {
 		return fmt.Errorf("failed to initialize config: %w", err)
@@ -332,6 +350,8 @@ func run(_ *cobra.Command, _ []string) {
 	voice := loadVoice(rando)
 	callsign := loadCallsign(rando)
 	parsedSRSFrequencies := cli.LoadFrequencies(srsFrequencies)
+	voiceLock := loadLock(voiceLockPath)
+	recognizerLock := loadLock(recognizerLockPath)
 
 	config := conf.Configuration{
 		ACMIFile:                     acmiFile,
@@ -349,9 +369,11 @@ func run(_ *cobra.Command, _ []string) {
 		Coalition:                    coalition,
 		RadarSweepInterval:           telemetryUpdateInterval,
 		Recognizer:                   conf.Recognizer(recognizerName),
+		RecognizerLock:               recognizerLock,
 		WhisperModel:                 whisperModel,
 		OpenAIAPIKey:                 openAIAPIKey,
 		Voice:                        voice,
+		VoiceLock:                    voiceLock,
 		Mute:                         mute,
 		VoiceSpeed:                   voiceSpeed,
 		VoicePauseLength:             voicePauseLength,

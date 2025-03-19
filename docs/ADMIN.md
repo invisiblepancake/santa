@@ -51,7 +51,11 @@ flowchart LR
     dcs[Windows<br/>DCS World Server<br/>TacView Exporter<br/>SRS Server] <--> skyeye[Linux<br/>SkyEye]
 ```
 
-**Running SkyEye with local speech recognition on the same computer as DCS World is not intended and probably won't work.** If you choose to try this anyway, configure Process Affinity to pin SkyEye to a set of dedicated CPU cores separate from any other CPU-intensive software. The easiest way to do this on Windows is by using the [CPU Affinities feature in Process Lasso](https://bitsum.com/processlasso-docs/#default_affinities).
+#### Caution: Running SkyEye and DCS World on One Computer
+
+**Running SkyEye with local speech recognition on the same computer as DCS World is not intended and probably won't work. I am not able to effectively provide support for issues with this configuration** If you choose to try this anyway, configure Process Affinity to pin SkyEye to a set of dedicated CPU cores separate from any other CPU-intensive software. The easiest way to do this on Windows is by using the [CPU Affinities feature in Process Lasso](https://bitsum.com/processlasso-docs/#default_affinities). But to emphasize, **I can't provide support for this configuration and recommend against it.**
+
+Running SkyEye with cloud speech recognition on the same computer as DCS World _is_ supported.
 
 ### Deployment with Cloud Speech Recognition
 
@@ -179,7 +183,7 @@ Outbound ports typically required by SkyEye:
 - `5002/TCP`: SRS Data
 - `5002/UDP`: SRS Audio
 - `42674/TCP`: TacView Real-Time Telemetry
-- `443/TCP`: Discord webhook
+- `443/TCP`: OpenAI Platform API, Discord webhook
 
 SkyEye does not require any inbound ports during runtime.
 
@@ -238,13 +242,39 @@ An example WinSW service definition is provided in the Windows release archive. 
 
 The scaler is also available as a container image at `ghcr.io/dharmab/skyeye-scaler`. A Linux binary is also provided in the Linux release archive, although without a service definition.
 
+## Multiple Instances (Experimental)
+
+You may want to run multiple instances of SkyEye on the same CPU:
+
+- Running a separate instance for each of the Blue and Red coalitions
+- Running multiple controllers for different radio frequencies
+- Running multiple instances for different servers
+
+There is a potential performance issue that could occur if two or more instances attempt to run an AI model at the same moment. Depending on how talkative your players are, this might be a rare occurrence, or it might be near constantly happening. You can mitigate this by configuring the `recognizer-lock-path` and `voice-lock-path` flags. Each of these is a file path where SkyEye will create and acquire a lock file before running the STT or TTS model, respectively. If the lock cannot be acquired in a reasonable time, SkyEye will abort handling that particular transmission. By configuring all instances to use the same lock path, you can ensure that only one instance is running the AI model at a time.
+
+Note that `recognizer-lock-path` should only be used if you are using local speech recognition. It is harmful when using cloud speech recognition.
+
+Also note that TTS is pretty fast in practice and you might not need to set `voice-lock-path`. Test your hardware with and without this lock and see if it's necessary. Using the lock may delay the controller's responses, so if you don't need it, don't use it.
+
+If you are not running multiple instances, these locks are harmful to performance and should not be used. This can especially be a problem if your machine has a slow or busy disk.
+
+Be aware that it is technically possible for the file lock to become deadlocked in some cases, such as if SkyEye is unable to exit cleanly. If you use this feature you should monitor the logs and traces for errors related to lock acquisition. You may need to manually resolve a deadlock by stopping down all SkyEye instances, deleting the lock file and restarting the instances.
+
+This architecture is marked experimental because I don't test this configuration. You are responsible for testing these features on your hardware.
+
+Lastly, I cannot predict how these locks work in combination with CPU Core Affinity/Process Lasso. I suspect results will vary depending on the CPU's core and cache layout. To repeat and emphasize: **Core Affinity/Process Lasso configurations have no guarantees of performance and are at your own risk.**
+
 # Installation
+
+You will need to install the Tacview Exporter in your DCS server. Use the official TacView client to verify that you can connect to the Real-Time Telemetry address and port. (Real-Time Telemetry is a paid feature of the Tacview client, but is available in the free trial if you don't have a paid license.)
+
+You will need to enable External AWACS Mode (EAM) in your SRS server settings and configure an EAM password for the coalition(s) you want SkyEye to serve (i.e. configure the blue password for SkyEye to provide GCI to blue players).
 
 ## Linux
 
 ### Automated Installation with Container Image
 
-A sample [cloud-init](https://cloudinit.readthedocs.io/en/latest/) config is provided in `/init/cloud-init` directory in the Git repository ([direct link](https://raw.githubusercontent.com/dharmab/skyeye/refs/heads/main/init/cloud-init/cloud-config.yaml)). This automates the installation and startup on a new cloud server instance, using the container `ghcr.io/dharmab/skyeye`. It should be compatible with most Linux distributions including Debian, Ubuntu, Fedora, Arch Linux and OpenSUSE.
+A sample [cloud-init](https://cloudinit.readthedocs.io/en/latest/) config is provided in the `/init/cloud-init` directory in the Git repository ([direct link](https://raw.githubusercontent.com/dharmab/skyeye/refs/heads/main/init/cloud-init/cloud-config.yaml)). This automates the installation and startup on a new cloud server instance, using the container `ghcr.io/dharmab/skyeye`. It should be compatible with most Linux distributions including Debian, Ubuntu, Fedora, Arch Linux and OpenSUSE.
 
 See documentation on cloud-init:
 
@@ -274,9 +304,7 @@ sudo systemctl restart skyeye
 
 You can install SkyEye on a Linux server by manually downloading a release and installing it. The instructions below should be compatible with Ubuntu and Arch Linux, and should be adaptable to other distributions.
 
-Install shared libraries for [Opus](https://opus-codec.org/), [SoX Resampler](https://sourceforge.net/p/soxr/wiki/Home/) and [OpenBLAS](http://www.openblas.net/) with [OpenMP](https://www.openmp.org/about/openmp-faq/#OMPAPI).
-
-Ubuntu:
+Install shared libraries for [Opus](https://opus-codec.org/), [SoX Resampler](https://sourceforge.net/p/soxr/wiki/Home/) and [OpenBLAS](http://www.openblas.net/) with [OpenMP](https://www.openmp.org/about/openmp-faq/#OMPAPI):
 
 ```sh
 # Install shared libraries on Ubuntu
@@ -367,8 +395,6 @@ sudo systemctl enable skyeye.service --now
 ```
 
 If you wish to change the version of SkyEye in the future:
-
-https://github.com/dharmab/skyeye/releases/download/v1.1.4/skyeye-linux-amd64.tar.gz
 
 ```sh
 # Remove any old downloads
